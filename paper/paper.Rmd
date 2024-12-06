@@ -1,0 +1,632 @@
+---
+title: "What to Expect with Life Expectancy"
+subtitle: "Does a country’s average life expectancy worsen with weakening economic factors (GDP and Income Composition) and deteriorating health conditions (Diphtheria and BMI)?"
+author: 
+  - Karmen Zhu, Edan Wong, Saanvi Prasanth
+thanks: "Code and data are available at: https://github.com/Karrrrmen/What-to-Expect-with-Life-Expectancy"
+date: 5 Dec 2024
+date-format: long
+format: pdf
+number-sections: true
+bibliography: references.bib
+---
+
+```{r}
+#| include: false
+#| warning: false
+#| message: false
+
+library(dplyr)
+library(tidyverse)
+library(here)
+library(PerformanceAnalytics)
+library(car)
+library(knitr)
+library(kableExtra)
+library(ggcorrplot)
+library(modelsummary)
+library(broom)
+
+data <- read.csv(here::here("data/analysis_data/cleaned_data.csv"))
+```
+
+
+# Introduction
+
+
+
+# Data {#sec-data}
+
+## Raw Data {#sec-first-point}
+The data used in this paper is access in from Open Data Toronto and the particular data set used was the Daily Shelter & Overnight Service Occupancy & Capacity (@opendatatoronto). To analysis the data and creating graphs using the data, following package that was build in the (R program @citeR) was used: tidyverse (@tidyverse), dplyr (@dplyr), lubridate (@lubridate), and ggplot2 (@ggplot2). We clean the column names, separate the date into `year` and `month`, and create a standardized date column for monthly aggregation. The cleaned data is then saved for further analysis.
+
+## Response variable(Life Expectancy)
+
+```{r}
+#| label: fig-responsepredictor-plots
+#| fig-cap: Visualizing the Relationship Between Life Expectancy and Its Predictors
+#| echo: false
+#| warning: false
+
+par(mfrow = c(2, 3))
+
+# 1. Life Expectancy VS GDP plot
+morandi_color_gdp <- rgb(0.4, 0.6, 0.4, 0.4)
+plot(data$GDP, data$LifeExpectancy, 
+     main = "Life Expectancy VS GDP", 
+     xlab = "GDP", 
+     ylab = "Life Expectancy",
+     col = morandi_color_gdp,
+     pch = 19,
+     cex = 0.5)
+# Add the regression line in red
+abline(149.7477, 0.2592, col = "red", lty = 2)
+
+# 2. Life Expectancy VS Polio Immunization Coverage plot
+morandi_color_polio <- rgb(0.8, 0.6, 0.6, 0.4)
+plot(data$Polio, data$LifeExpectancy, 
+     main = "VS Polio Immunization Coverage", 
+     xlab = "Polio", 
+     ylab = "Life Expectancy",
+     col = morandi_color_polio,
+     pch = 19,
+     cex = 0.5)
+# Add the regression line in red
+abline(149.7477, 0.2592, col = "red", lwd = 2)
+
+# 3. Life Expectancy VS Diphtheria Immunization Coverage plot
+morandi_color_diphtheria <- rgb(0.6, 0.8, 0.8, 0.4)
+plot(data$Diphtheria, data$LifeExpectancy, 
+     main = "VS Diphtheria Immunization Coverage", 
+     xlab = "Diphtheria", 
+     ylab = "Life Expectancy",
+     col = morandi_color_diphtheria,
+     pch = 19,
+     cex = 0.5)
+# Add the regression line in red
+abline(149.7477, 0.2592, col = "red", lwd = 2)
+
+# 4. Linear Model for Life Expectancy by Developed/Developing Status
+data$Status <- factor(data$Status, labels = c("Developed", "Developing"))
+boxplot(LifeExpectancy ~ Status, data=data, 
+        main="VS Status", 
+        xlab="Status", ylab="Life Expectancy")
+
+# 5. Life Expectancy VS Income Composition of Resources plot
+morandi_color_income <- rgb(0.6, 0.6, 0.8, 0.4)
+plot(data$IncomeComposition, data$LifeExpectancy, 
+     main = "VS Income Composition of Resources", 
+     xlab = "Income Composition", 
+     ylab = "Life Expectancy",
+     col = morandi_color_income,
+     pch = 19,
+     cex = 0.5)
+# Add the regression line in red
+abline(149.7477, 0.2592, col = "red", lty = 2)
+
+# Reset layout back to normal (1 plot per page)
+par(mfrow = c(1, 1))
+
+```
+
+
+```{r}
+#| label: fig-cor-matrix
+#| fig-cap: Correlation Matrix
+#| echo: false
+# Convert Status to a numeric variable
+data$Status <- as.numeric(factor(data$Status))
+cor_data <- data[, c("LifeExpectancy", "GDP", "Polio", "Diphtheria", "IncomeComposition")]
+# correlation matrix
+cor_matrix <- cor(cor_data, use = "complete.obs")
+print(cor_matrix)
+```
+
+```{r}
+#| label: fig-cor-plot
+#| fig-cap: Correlation Plot
+#| echo: false
+#| warning: false
+
+data$Status <- as.numeric(factor(data$Status))
+
+cor_data <- data[, c("LifeExpectancy", "GDP", "Status", "Polio", "Diphtheria", "IncomeComposition", "BMI")]
+chart.Correlation(cor_data, histogram = TRUE, pch = 19)
+```
+
+The correlation matrix shows the high correlation between `Polio` and `Diphtheria`, which means that `Polio` and `Diphtheria` is linearly dependent, and including both predictor would lead to multicollinearity. To address this issue, we decided to drop one of these two predictors from the model, given that both variables capture similar information related to immunization coverage. 
+
+```{r}
+#| label: fig-TotalExpenditure
+#| fig-cap: Preliminary Model using the Predictors
+#| echo: false
+#| warning: false
+
+fit = lm(LifeExpectancy ~  GDP + Polio + Diphtheria + Status + IncomeComposition + BMI, data=data)
+summary(fit)
+```
+
+
+```{r}
+#| label: fig-resi-fitted
+#| fig-cap: Residuals vs Fitted
+#| echo: false
+#| warning: false
+
+morandi_residual_fitted <- rgb(1.0, 0.8, 0.4, 0.4)
+fi <- fitted(fit)
+resi <- resid(fit)
+plot(resi ~ fi,
+     main = "Residuals vs Fitted",
+     xlab = "Fitted values",
+     ylab = "Residuals",
+     pch = 19, col = morandi_residual_fitted)
+abline(h = 0, col = "red", lty = 2)
+```
+
+
+```{r}
+#| label: fig-resi-plots
+#| fig-cap: Residuals versus Each Predictor
+#| echo: false
+#| warning: false
+
+par(mfrow = c(2, 3))  # (2 rows, 3 columns)
+
+data <- data[complete.cases(data$LifeExpectancy, data$GDP, data$Polio, data$Diphtheria, data$IncomeComposition, data$Status, data$BMI), ]
+
+plot(data$GDP, resi, xlab = "GDP", ylab = "Residuals", main = "Residuals vs GDP")
+abline(h = 0, col = "red")
+
+plot(data$Polio, resi, xlab = "Polio", ylab = "Residuals", main = "Residuals vs Polio")
+abline(h = 0, col = "red")
+
+plot(data$Diphtheria, resi, xlab = "Diphtheria", ylab = "Residuals", main = "Residuals vs Diphtheria")
+abline(h = 0, col = "red")
+
+plot(data$IncomeComposition, resi, xlab = "Income Composition", ylab = "Residuals", main = "Residuals vs Income Composition")
+abline(h = 0, col = "red")
+
+boxplot(resi ~ data$Status, xlab = "Status", ylab = "Residuals", main = "Residuals vs Status")
+abline(h = 0, col = "red")
+
+boxplot(resi ~ data$BMI, xlab = "BMI", ylab = "Residuals", main = "Residuals vs BMI")
+abline(h = 0, col = "red")
+
+```
+GDP: Shows fan-shaped pattern of the distribution instead of null pattern and the data points scattered around zero, which violates constant variance. The distribution of data does not have clusters, so the assumption of uncorrelated error holds. The scatter plots does not have a systematic pattern, which satisfies the assumption of linearity.
+
+Polio&Diphtheria: Shows fan-shaped pattern of the distribution instead of null pattern and the data points scattered around zero, which violates constant variance. The distribution of data does not have clusters, so the assumption of uncorrelated error holds. The scatter plots does not have a systematic pattern, which satisfies the assumption of linearity.
+
+Income Composition: No fan-shaped pattern, the data points are gathered together, so it does not violate homoscedasticity assumption, as well as the assumption of uncorrelated error holds because the distribution of data does not have clusters. However, a linear pattern of the scatter plot is presented, which violates the assumption of linearity.
+
+Status: the skewed boxplot in Residual vs Status indicate that residuals is not normalized, this violates normality assumption, which could affect inference and p-values. The residuals across the boxplots for each status (`1` stands for developed and `2` stands for developing) is widely spread, which suggests a violation of constant variance. The meidan line of residuals for each `Status` category should be close to 0, the Linearity holds for Status
+
+BMI: No fan-shaped pattern, the data points are gathered together, so it does not violate homoscedasticity assumption, as well as linearity due to no systematic pattern shown While there are two clusters presented in the scatter plot, which causes a violation of uncorrelated error.
+
+```{r}
+#| label: fig-qq
+#| fig-cap: Q-Q Plot of Residuals
+#| echo: false
+#| warning: false
+
+morandi_qq <- rgb(0.4, 0.2, 0.2, 0.4)
+qqnorm(resi, main = "Q-Q Plot", col = morandi_qq)
+qqline(resi, col = "red", lty = 2)
+
+```
+The QQ-plot of residuals are close to the 45-degree line with deviations at the tails, which means the assumption of normality is violated.
+
+```{r}
+#| fig-cap: Distribution of Response Value
+#| echo: false
+#| warning: false
+
+hist(resi,
+     main = "Distribution of Residuals",
+     xlab = "Residuals",
+     breaks = 30)
+```
+The distribution of residuals is normally distributed, meaning that this satisfies normality assumption.
+
+```{r}
+#| label: fig-lambda
+#| fig-cap: Find Lambda for numeric predictors and response value
+#| echo: false
+#| warning: false
+
+# Check for non-positive values for each variable
+non_positive_check <- sapply(data[c("LifeExpectancy", "GDP", "Polio", "Diphtheria", 
+                                           "IncomeComposition", "BMI")], function(x) sum(x <= 0))
+data_clean <- data[!non_positive_check, ]
+
+# Remove rows where any of the variables have non-positive values
+data_clean <- data_clean[!apply(data_clean[c("LifeExpectancy", "GDP", "Polio", 
+                                              "Diphtheria", "IncomeComposition", 
+                                              "BMI")], 1, function(x) any(x <= 0)), ]
+
+# Apply Box-Cox transformation to both response and predictors separately
+transformation_response <- powerTransform(data_clean$LifeExpectancy)
+transformation_predictors <- powerTransform(data_clean[c("GDP", "Polio", "Diphtheria", 
+                                                         "IncomeComposition", "BMI")])
+
+# Display summaries of transformations
+summary(transformation_response)
+summary(transformation_predictors)
+
+```
+
+```{r}
+#| label: fig-transformedmodel
+#| fig-cap: A summary of the transformed model
+#| echo: false
+#| warning: false
+
+# Applying the transformation to the dataset
+data_clean$LifeExpectancy_transformed <- bcPower(data_clean$LifeExpectancy, lambda = transformation_response$lambda)
+data_clean$GDP_transformed <- bcPower(data_clean$GDP, lambda = transformation_predictors$lambda[1])
+data_clean$Polio_transformed <- bcPower(data_clean$Polio, lambda = transformation_predictors$lambda[2])
+data_clean$Diphtheria_transformed <- bcPower(data_clean$Diphtheria, lambda = transformation_predictors$lambda[3])
+data_clean$IncomeComposition_transformed <- bcPower(data_clean$IncomeComposition, lambda = transformation_predictors$lambda[4])
+data_clean$BMI_transformed <- bcPower(data_clean$BMI, lambda = transformation_predictors$lambda[5])
+
+# Ensure Status is treated as a categorical variable
+data_clean$Status <- as.factor(data_clean$Status)
+
+# Fit the transformed model using the transformed variables
+transformed_fit <- lm(LifeExpectancy_transformed ~ GDP_transformed + Polio_transformed + 
+                      Diphtheria_transformed + Status + 
+                      IncomeComposition_transformed + BMI_transformed, data = data_clean)
+
+# View the summary of the transformed model
+summary(transformed_fit)
+
+```
+
+Adjusted R-squared for the transfored model is 81.43%, which indicates that the model explains a significant proportion of the variance, even when accounting for the number of predictors, and the p-value of < 2.2e-16 suggests that the model is highly statistically significant overall.
+
+```{r}
+#| label: fig-resi-plots-transformed
+#| fig-cap: Residuals versus Each Predictor
+#| echo: false
+#| warning: false
+
+resi_transformed <- resid(transformed_fit)
+
+par(mfrow = c(2, 3))  # (2 rows, 3 columns)
+
+data_clean <- data_clean[complete.cases(data_clean$LifeExpectancy_transformed, data_clean$GDP_transformed, data_clean$Polio_transformed, data_clean$Diphtheria_transformed, data_clean$IncomeComposition_transformed, data_clean$Status, data_clean$BMI_transformed), ]
+
+plot(data_clean$GDP_transformed, resi_transformed, xlab = "GDP", ylab = "Residuals", main = "Residuals vs GDP")
+abline(h = 0, col = "coral")
+
+plot(data_clean$Polio_transformed, resi_transformed, xlab = "Diphtheria", ylab = "Residuals", main = "Residuals vs Polio")
+abline(h = 0, col = "coral")
+
+plot(data_clean$Diphtheria_transformed, resi_transformed, xlab = "Diphtheria", ylab = "Residuals", main = "Residuals vs Diphtheria")
+abline(h = 0, col = "coral")
+
+plot(data_clean$IncomeComposition_transformed, resi_transformed, xlab = "Income Composition", ylab = "Residuals", main = "Residuals vs Income Composition")
+abline(h = 0, col = "coral")
+
+boxplot(resi_transformed ~ data_clean$Status, xlab = "Status", ylab = "Residuals", main = "Residuals vs Status")
+abline(h = 0, col = "coral")
+
+boxplot(resi_transformed ~ data_clean$BMI_transformed, xlab = "BMI", ylab = "Residuals", main = "Residuals vs BMI")
+abline(h = 0, col = "coral")
+
+```
+After the transformation, all the distribution predictors satisfy the assumption of constant vriance, uncorrelated error, and linearity.
+
+```{r}
+#| label: fig-qq-transformed
+#| fig-cap: Q-Q Plot of Residuals
+#| echo: false
+#| warning: false
+
+morandi_qq <- rgb(0.4, 0.6, 0.5, 0.4)
+qqnorm(resi_transformed, main = "Q-Q Plot", col = morandi_qq)
+qqline(resi_transformed, col = "red", lty = 2)
+
+```
+The QQ-plot of residuals are closer to the 45-degree with less deviation after the transformation, which follows the assumption of normality.
+
+```{r}
+#| label: fig-resi-transformed
+#| fig-cap: Residuals in Transformed Model vs Fitted
+#| echo: false
+#| warning: false
+
+fi_transformed <- fitted(transformed_fit)
+plot(resi_transformed ~ fi_transformed,
+     main = "Residuals vs Fitted",
+     xlab = "Fitted values",
+     ylab = "Residuals",
+     pch = 19, col = "#d0a5eb")
+abline(h = 0, col = "coral", lty = 2)
+```
+
+
+```{r}
+#| fig-cap: Distribution of Response Value
+#| echo: false
+#| warning: false
+
+ggplot(data_clean, aes(x = resi_transformed)) +
+  geom_histogram(aes(y = ..density..), 
+                 bins = 40, fill = "#433769", color = "white", alpha = 0.7) +
+  geom_density(color = "#8980a8", fill = "#d0c5eb", alpha = 0.4) +
+  labs(
+    title = "Distribution of Residuals",
+    x = "Residuals", y = "Frequency"
+  ) +
+  theme_minimal() 
+```
+The distribution of residuals is still normalized, which satisfies the assumption of normality. Until now, all the assumptions are followed, we can continue to model reduction using AIC
+
+```{r}
+#| label: fig-aic
+#| fig-cap: Apply AIC to find the model that describes the best
+#| echo: false
+#| warning: false
+
+reduced_fit <- lm(LifeExpectancy_transformed ~ GDP_transformed + Diphtheria_transformed + Polio_transformed +
+                        IncomeComposition_transformed + Status + BMI_transformed, data = data_clean)
+step(reduced_fit, direction = "backward", k=2)
+
+```
+AIC would select a better fit of the model. Based on the backward elimination procedure (See @fig-aic), all AIC of sub-models are larger than the initial model, none of the predictors should be removed from the initial model and all predictors (`GDP`, `Diphtheria`, `Status`, `BMI`, and `IncomeComposition`) contribute significantly to explaining the variation in `LifeExpectancy` supported by this statistical evidence.
+
+The predictor `Polio_transformed` needs to be dropped from the model because its p-value is high (0.646), indicating that it is not statistically significant in explaining the variation in life expectancy. Additionally, removing `Polio_transformed` leads to an improvement as reflected by the AIC. This suggests that `Polio_transformed` does not provide valuable information for the model and may be redundant, possibly due to multicollinearity with other predictors like `Diphtheria_transformed.` By removing `Polio_transformed`, the model becomes simpler and more focused on the predictors that have a stronger impact on life expectancy.
+
+```{r}
+#| label: fig-vif
+#| fig-cap: Apply VIF to avoid Multicollinearity
+#| echo: false
+#| warning: false
+
+reduced_fit <- lm(LifeExpectancy_transformed ~ GDP_transformed + Diphtheria_transformed +
+                        IncomeComposition_transformed + Status + BMI_transformed, data = data_clean)
+
+vif(reduced_fit)
+
+```
+In the result of VIF(@git-vif), all the VIF values are below 5, which suggests that there is no significant multicollinearity among the predictors in the reduced model. This means that the variables are relatively independent of each other
+
+```{r}
+#| label: fig-resi-plots-reduced
+#| fig-cap: Residuals versus Each Predictor
+#| echo: false
+#| warning: false
+
+resi_reduced <- resid(reduced_fit)
+
+par(mfrow = c(2, 3))  # (2 rows, 3 columns)
+
+data_clean <- data_clean[complete.cases(data_clean$LifeExpectancy_transformed, data_clean$GDP_transformed, data_clean$Diphtheria_transformed, data_clean$IncomeComposition_transformed, data_clean$Status, data_clean$BMI_transformed), ]
+
+plot(data_clean$GDP_transformed, resi_reduced, xlab = "GDP", ylab = "Residuals", main = "Residuals vs GDP")
+abline(h = 0, col = "coral")
+
+plot(data_clean$Diphtheria_transformed, resi_reduced, xlab = "Diphtheria", ylab = "Residuals", main = "Residuals vs Diphtheria")
+abline(h = 0, col = "coral")
+
+plot(data_clean$IncomeComposition_transformed, resi_reduced, xlab = "Income Composition", ylab = "Residuals", main = "Residuals vs Income Composition")
+abline(h = 0, col = "coral")
+
+boxplot(resi_reduced ~ data_clean$Status, xlab = "Status", ylab = "Residuals", main = "Residuals vs Status")
+abline(h = 0, col = "coral")
+
+boxplot(resi_reduced ~ data_clean$BMI_transformed, xlab = "BMI", ylab = "Residuals", main = "Residuals vs BMI")
+abline(h = 0, col = "coral")
+
+qqnorm(resi_reduced, main = "Q-Q Plot", col = "royalblue")
+qqline(resi_reduced, col = "coral", lty = 2)
+
+```
+
+After the transformation, all the distribution predictors satisfy the assumption of constant vriance, uncorrelated error, and linearity. The QQ-plot of residuals are closer to the 45-degree with less deviation after the transformation, which follows the assumption of normality.
+
+```{r}
+#| label: fig-resi-reduced
+#| fig-cap: Distribution of Response Value
+#| echo: false
+#| warning: false
+
+ggplot(data_clean, aes(x = resi_reduced)) +
+  geom_histogram(aes(y = ..density..), 
+                 bins = 40, fill = "#433769", color = "white", alpha = 0.7) +
+  geom_density(color = "#8980a8", fill = "#d0c5eb", alpha = 0.4) +
+  labs(
+    title = "Distribution of Residuals",
+    x = "Residuals", y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+The distribution of residuals is normalized, which satisfies the assumption of normality
+
+```{r}
+#| label: fig-residual-fitted
+#| fig-cap: Residuals vs Fitted after transformation and fitting transformed model
+#| echo: false
+#| warning: false
+
+fi_reduced <- fitted(reduced_fit)
+resi_reduced <- resid(reduced_fit)
+plot(resi_reduced ~ fi_reduced,
+     main = "Residuals vs Fitted",
+     xlab = "Fitted values",
+     ylab = "Residuals",
+     pch = 19, col = "#89c0a8")
+abline(h = 0, col = "red", lty = 2)
+
+```
+
+the residuals are evenly scattered around 0, with no discernible pattern. This suggests that the linearity assumption is met. So far, all the assumptions are checked and satisfied.
+
+```{r}
+#| label: fig-anova
+#| fig-cap: Apply partial F test to find which model describes the best
+#| echo: false
+#| warning: false
+
+anova(reduced_fit, transformed_fit)
+```
+Now we apply ANOVA to compare the reduced model, which excludes `Polio_transformed`, with the transformed model that includes all the predictors. The F-statistic is 0.256, and the p-value is 0.6129, which is much higher than the significance value 0.05 indicating that it fails to reject the null hypothesis In other words, `Polio_transformed` is not significantly contributing to the explanation of `LifeExpectancy_transformed`. Therefore, there is evidence that the `reduced_fit` fits better than `transformed_fit.` 
+
+
+# Results
+
+```{r}
+#| label: tbl-lifeex
+#| tbl-cap: Predicted average Life Extectancy for developed and developing countries based on socioeconomic factors
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
+
+# load data and model
+lm_developed <- readRDS(here::here("models/lm_developed.rds"))
+lm_developing <- readRDS(here::here("models/lm_developing.rds"))
+
+# make predictions
+data <- data %>%
+  mutate(
+    PredictedDeveloped = predict(lm_developed, newdata = data),
+    PredictedDeveloping = predict(lm_developing, newdata = data)
+  )
+
+# median and average predictions
+results <- data %>%
+  summarise(
+    AverageDeveloped = mean(PredictedDeveloped, na.rm = TRUE),
+    AverageDeveloping = mean(PredictedDeveloping, na.rm = TRUE)
+  )
+
+# display avg percent and normalized percent
+results %>%
+  select(AverageDeveloped, AverageDeveloping) %>%
+  kable(
+    col.names = c("Average Life Expectancy in Developed Countries", "Average Life Expectancy in Developing Countries"),
+    digits = 2,
+    booktabs = TRUE
+  ) %>%
+  kable_styling(
+    latex_options = c("striped", "scale_down")
+  )
+
+```
+
+
+```{r}
+ggplot(data_clean, aes(x = TotalExpenditure, y = LifeExpectancy, color = Status)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Year", y = "Life Expectancy")
+```
+
+
+```{r}
+#| label: tbl-keyestimates
+#| tbl-cap: "Summary of key model estimates for Developed and Developing counties, including coefficients for predictors like Diphtheria, GDP, TotalExpenditure, and BMI, with standard errors for each estimate. Model performance statistics, such as sample size, R², and adjusted R², are also displayed."
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
+
+# load data and model
+lm_developed <- readRDS(here::here("models/lm_developed.rds"))
+lm_developing <- readRDS(here::here("models/lm_developing.rds"))
+
+model_list <- list("Model for Developed" = lm_developed, "Model for Developing" = lm_developing)
+modelsummary(model_list, 
+             output = "kableExtra", 
+             statistic = "std.error", 
+             coef_map = c("Diphtheria" = "Diphtheria Immunization",
+                          "GDP" = "GDP",
+                          "IncomeComposition" = "Income Composition",
+                          "BMI" = "BMI")) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
+```
+
+
+```{r}
+#| label: tbl-predictorcontribution
+#| tbl-cap: Summary of the Life Expectancy model, which includes key variables such as GDP, Diphtheria, income composition The table presents the model coefficients along with their standard errors.
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
+
+# Load the model
+lm_overall <- readRDS(here::here("models/lm_overall.rds"))
+
+# Extract summary statistics using broom
+coefficients_df <- tidy(lm_overall) %>%
+  mutate(
+    Term_Type = "Linear"  # Add a column specifying term type
+  )
+
+# Clean and format the Term column
+coefficients_df <- coefficients_df %>%
+  mutate(
+    term = gsub("[^[:alnum:]_\\s]", "", term)  # Remove special characters
+  )
+
+# Select only the required columns
+coefficients_cleaned <- coefficients_df %>%
+  select(term, estimate, std.error, statistic, p.value, Term_Type) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `t Value` = statistic,
+    `Pr(>|t|)` = p.value
+  )
+
+# Create the final table
+kable(
+  coefficients_cleaned,
+  format = "html",
+  col.names = c("Term", "Estimate", "Std. Error", "t Value", "Pr(>|t|)", "Term_Type"),
+  digits = 3,
+  caption = "Summary of the Life Expectancy model with key predictors and their contributions."
+)
+
+```
+
+
+The summary of the Life Expectancy model, which includes key variables such as GDP, Diphtheria, income composition, highlights the contribution of each predictor to the multiple linear regression model. The `Intercept` represents the predicted baseline life expectancy when all other predictors are zero.
+where status
+GDP performs a nuanced contribution to the model as shown in the table, this is because GDP is a measurement of the value of goods and services bought and sold in markets, so it
+
+
+\newpage
+
+# Discussion
+
+## First discussion point
+In the response vs. 5 predictors plots (@fig-responsepredictor-plots), Status categorizes countries into developed or developing status, which distincts countries by their economic dependence and medical development level. GDP (in USD) is the statistic that measures the economic welfare of a country. Income composition of resources is the HDI measurement on the standard of living calculated by GNI per capita, which is commonly used to reflect average income. Polio and Diphtheria represent the immunization coverage among 1-year-olds children in percentage and they manifest the extensiveness and accessibility for public health, where widespread infectious diseases can potentially lower life expectancy as these two diseases are fatal to children. The above five predictors reveal the proportional relationships between national economic standings and life expectancy and analyze whether higher economic standings countries have a larger life expectancy.
+
+## Second discussion point - Preliminary Results (212 words)
+From the Residuals vs Fitted graph(@fig-residual-fitted) and the plots of Residuals vs each Predictor (@fig-residuals-plots), the residuals appear randomly scattered around the zero line, which satisfies linearity There is no discernible pattern in the residuals, suggesting the model captures the linear relationship between the predictors and response variable well. The residuals also do not display any systematic pattern, implying that the errors are uncorrelated.
+
+In QQ Plot(@fig-qq), the residuals generally follow the 45-degree reference line, which suggests that the assumption of normality is mostly satisfied. However, the points at both ends deviate from the line, indicating potential outliers. The presence of outliers requires further transformation of both response and predictors values
+
+The Scale-Location graph(@fig-scale-location) shows that while the points are not fully evenly dispersed, they do not exhibit a clear pattern or trend, indicating that the assumption of Constant Variance may not be entirely satisfied. The presence of a non-horizontal line suggests variability in the spread of residuals, which our team should address in the next steps to improve model accuracy.
+
+The Residuals vs. Leverage plot(@fig-leverage) shows some points clustering around zero, while others are more dispersed, with no clear pattern evident. This indicates a need for our team to improve the distribution of points in future analyses.
+
+
+## Weaknesses and next steps
+
+We find that Life Expectancy is impacted differently by our predictors, depending on a country’s status.
+Income Composition plays a vital role for developed nations, with a much larger coefficient than noted in developing nations. 
+BMI has a positive impact on life expectancy for developing nations, but negative for developed- likely due to presence of obesity related issues. 
+We believe spurious correlation, due to omitted variables, could affect our analysis. Future studies could include variables to account for cultural and health norms particular to a country to improve on our studies.   
+
+\newpage
+
+
+# References
